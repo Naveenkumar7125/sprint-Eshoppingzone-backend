@@ -1,163 +1,92 @@
 package com.eshoppingzone.wallet.controller;
 
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
-import com.eshoppingzone.wallet.dto.request.AdminCustomerTransferRequest;
-import com.eshoppingzone.wallet.dto.request.CreateWalletRequest;
-import com.eshoppingzone.wallet.dto.request.CustomerAdminTransferRequest;
-import com.eshoppingzone.wallet.dto.request.WalletDebitRequest;
-import com.eshoppingzone.wallet.dto.request.WalletTopUpRequest;
-import com.eshoppingzone.wallet.dto.response.TransferResponse;
-import com.eshoppingzone.wallet.dto.response.WalletBalanceResponse;
-import com.eshoppingzone.wallet.dto.response.WalletResponse;
-import com.eshoppingzone.wallet.dto.response.WalletTransactionResponse;
-import com.eshoppingzone.wallet.enums.TransactionType;
+import com.eshoppingzone.wallet.dto.*;
 import com.eshoppingzone.wallet.security.SecurityUtils;
 import com.eshoppingzone.wallet.service.WalletService;
-
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.math.BigDecimal;
+import java.util.Map;
 
 @RestController
-@RequestMapping("/api/wallet")
-@RequiredArgsConstructor
-@Tag(name = "Wallet Service", description = "Wallet management APIs")
+@RequestMapping("/api/v1/wallet")
+@Tag(name = "Wallet & Finance", description = "Endpoints for user digital wallets, balance, top-up, and atomic transfers")
 public class WalletController {
 
     private final WalletService walletService;
-    private final SecurityUtils securityUtils;
 
-    // ========== CREATE ==========
-
-    @PostMapping
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Create wallet for authenticated user")
-    public ResponseEntity<WalletResponse> createWallet(@Valid @RequestBody CreateWalletRequest request) {
-        Long userId = securityUtils.getCurrentUserId();
-        String role = securityUtils.getCurrentRole();
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(walletService.createWallet(request, userId, role));
+    public WalletController(WalletService walletService) {
+        this.walletService = walletService;
     }
 
-    // ========== READ ==========
-
     @GetMapping
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Get authenticated user's wallet")
-    public ResponseEntity<WalletResponse> getMyWallet() {
-        return ResponseEntity.ok(
-                walletService.getMyWallet(securityUtils.getCurrentUserId(), securityUtils.getCurrentRole()));
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Get current authenticated user's wallet details")
+    public ResponseEntity<WalletDto> getWallet() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        WalletDto wallet = walletService.getWallet(userId);
+        return ResponseEntity.ok(wallet);
     }
 
     @GetMapping("/balance")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Get authenticated user's wallet balance")
-    public ResponseEntity<WalletBalanceResponse> getBalance() {
-        return ResponseEntity.ok(
-                walletService.getBalance(securityUtils.getCurrentUserId(), securityUtils.getCurrentRole()));
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Get current wallet balance")
+    public ResponseEntity<Map<String, Object>> getBalance() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        BigDecimal balance = walletService.getBalance(userId);
+        return ResponseEntity.ok(Map.of(
+                "userId", userId,
+                "balance", balance,
+                "currency", "INR"
+        ));
     }
-
-    // ========== TOP-UP ==========
 
     @PostMapping("/top-up")
-    @PreAuthorize("hasRole('CUSTOMER')")
-    @Operation(summary = "Top up customer wallet")
-    public ResponseEntity<WalletResponse> topUp(@Valid @RequestBody WalletTopUpRequest request) {
-        return ResponseEntity.ok(walletService.topUp(request, securityUtils.getCurrentUserId()));
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Top-up wallet balance with idempotency key")
+    public ResponseEntity<WalletDto> topUp(@Valid @RequestBody WalletTopUpRequest request) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        WalletDto updated = walletService.topUp(userId, request);
+        return ResponseEntity.ok(updated);
     }
-
-    // ========== INTERNAL: DEBIT ==========
-
-    @PostMapping("/debit")
-    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
-    @Operation(summary = "Internal - Debit a wallet")
-    public ResponseEntity<TransferResponse> debit(@Valid @RequestBody WalletDebitRequest request) {
-        return ResponseEntity.ok(walletService.debitWallet(request));
-    }
-
-    // ========== INTERNAL: ADMIN CREDIT ==========
-
-    @PostMapping("/admin/credit")
-    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
-    @Operation(summary = "Internal - Credit admin wallet")
-    public ResponseEntity<TransferResponse> creditAdmin(@Valid @RequestBody WalletDebitRequest request) {
-        return ResponseEntity.ok(walletService.creditAdminWallet(request));
-    }
-
-    // ========== INTERNAL: CUSTOMER → ADMIN ==========
-
-    @PostMapping("/internal/transfer/customer-to-admin")
-    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
-    @Operation(summary = "Internal - Transfer customer wallet → admin wallet")
-    public ResponseEntity<TransferResponse> transferCustomerToAdmin(
-            @Valid @RequestBody CustomerAdminTransferRequest request) {
-        return ResponseEntity.ok(walletService.transferCustomerToAdmin(request));
-    }
-
-    // ========== INTERNAL: ADMIN → CUSTOMER ==========
-
-    @PostMapping("/internal/transfer/admin-to-customer")
-    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
-    @Operation(summary = "Internal - Transfer admin wallet → customer wallet (refund)")
-    public ResponseEntity<TransferResponse> transferAdminToCustomer(
-            @Valid @RequestBody AdminCustomerTransferRequest request) {
-        return ResponseEntity.ok(walletService.transferAdminToCustomer(request));
-    }
-
-    // ========== TRANSACTIONS ==========
 
     @GetMapping("/transactions")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Get paginated wallet transactions")
-    public ResponseEntity<Page<WalletTransactionResponse>> getTransactions(
-            @RequestParam(required = false) TransactionType type,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        return ResponseEntity.ok(walletService.getTransactions(
-                securityUtils.getCurrentUserId(), securityUtils.getCurrentRole(), type, pageable));
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Get transaction history for current user")
+    public ResponseEntity<Page<WalletTransactionDto>> getTransactions(@PageableDefault(size = 20) Pageable pageable) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Page<WalletTransactionDto> transactions = walletService.getTransactions(userId, pageable);
+        return ResponseEntity.ok(transactions);
     }
 
-    @GetMapping("/transactions/{transactionId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Get a specific transaction")
-    public ResponseEntity<WalletTransactionResponse> getTransaction(@PathVariable Long transactionId) {
-        return ResponseEntity.ok(walletService.getTransaction(
-                transactionId, securityUtils.getCurrentUserId(), securityUtils.getCurrentRole()));
+    @GetMapping("/transactions/{reference}")
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Get transaction details by reference")
+    public ResponseEntity<WalletTransactionDto> getTransactionByReference(@PathVariable String reference) {
+        WalletTransactionDto tx = walletService.getTransactionByReference(reference);
+        return ResponseEntity.ok(tx);
     }
 
-    // ========== ADMIN ==========
-
-    @PatchMapping("/{walletId}/block")
-    @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Block a wallet (admin)")
-    public ResponseEntity<Void> block(@PathVariable Long walletId) {
-        walletService.blockWallet(walletId);
-        return ResponseEntity.noContent().build();
+    @PostMapping("/internal/transfer/customer-to-admin")
+    @Operation(summary = "Internal Feign: Atomically debits customer and credits admin for an order")
+    public ResponseEntity<InternalWalletTransferResponse> transferCustomerToAdmin(@Valid @RequestBody InternalWalletTransferRequest request) {
+        InternalWalletTransferResponse response = walletService.transferCustomerToAdmin(request);
+        return ResponseEntity.ok(response);
     }
 
-    @PatchMapping("/{walletId}/activate")
-    @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Activate a wallet (admin)")
-    public ResponseEntity<Void> activate(@PathVariable Long walletId) {
-        walletService.activateWallet(walletId);
-        return ResponseEntity.noContent().build();
+    @PostMapping("/internal/transfer/admin-to-customer")
+    @Operation(summary = "Internal Feign: Atomically debits admin and credits customer for a refund")
+    public ResponseEntity<InternalWalletTransferResponse> transferAdminToCustomer(@Valid @RequestBody InternalWalletTransferRequest request) {
+        InternalWalletTransferResponse response = walletService.transferAdminToCustomer(request);
+        return ResponseEntity.ok(response);
     }
 }

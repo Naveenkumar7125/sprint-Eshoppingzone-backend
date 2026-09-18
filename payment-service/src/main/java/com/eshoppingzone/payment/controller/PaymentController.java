@@ -1,134 +1,99 @@
 package com.eshoppingzone.payment.controller;
 
+import com.eshoppingzone.payment.dto.*;
+import com.eshoppingzone.payment.security.SecurityUtils;
+import com.eshoppingzone.payment.service.PaymentService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
-import com.eshoppingzone.payment.dto.request.CreatePaymentRequest;
-import com.eshoppingzone.payment.dto.request.RefundPaymentRequest;
-import com.eshoppingzone.payment.dto.response.PaymentResponse;
-import com.eshoppingzone.payment.dto.response.RefundResponse;
-import com.eshoppingzone.payment.enums.PaymentStatus;
-import com.eshoppingzone.payment.service.PaymentService;
-import com.eshoppingzone.payment.security.SecurityUtils;
-
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/payments")
-@RequiredArgsConstructor
-@Tag(name = "Payment Service", description = "Payment & refund APIs")
+@RequestMapping("/api/v1/payments")
+@Tag(name = "Payments & Refunds", description = "Endpoints for payment initiation, wallet debits, COD collection, and refunds")
 public class PaymentController {
 
     private final PaymentService paymentService;
-    private final SecurityUtils securityUtils;
 
-    // ========== CREATE ==========
-
-    @PostMapping
-    @PreAuthorize("hasRole('CUSTOMER')")
-    @Operation(summary = "Create a payment for an order")
-    public ResponseEntity<PaymentResponse> createPayment(
-            @Valid @RequestBody CreatePaymentRequest request,
-            @RequestHeader("Authorization") String bearerToken) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(paymentService.createPayment(
-                        request,
-                        securityUtils.getCurrentUserId(),
-                        bearerToken));
+    public PaymentController(PaymentService paymentService) {
+        this.paymentService = paymentService;
     }
 
-    // ========== INITIATE / CONFIRM ==========
+    @PostMapping
+    @Operation(summary = "Initiate and process a payment (WALLET or COD)")
+    public ResponseEntity<PaymentDto> createPayment(@Valid @RequestBody PaymentInitiateRequest request) {
+        PaymentDto payment = paymentService.createPayment(request);
+        return new ResponseEntity<>(payment, HttpStatus.CREATED);
+    }
 
     @PostMapping("/{paymentId}/initiate")
-    @PreAuthorize("hasRole('CUSTOMER')")
-    @Operation(summary = "Initiate a payment (wallet debit or COD pending)")
-    public ResponseEntity<PaymentResponse> initiatePayment(@PathVariable Long paymentId) {
-        return ResponseEntity.ok(paymentService.initiatePayment(
-                paymentId, securityUtils.getCurrentUserId()));
+    @Operation(summary = "Initiate payment attempt")
+    public ResponseEntity<PaymentDto> initiatePayment(@PathVariable Long paymentId) {
+        PaymentDto payment = paymentService.initiatePayment(paymentId);
+        return ResponseEntity.ok(payment);
     }
 
     @PostMapping("/{paymentId}/confirm")
-    @PreAuthorize("hasRole('CUSTOMER')")
-    @Operation(summary = "Confirm a payment (idempotent)")
-    public ResponseEntity<PaymentResponse> confirmPayment(@PathVariable Long paymentId) {
-        return ResponseEntity.ok(paymentService.confirmPayment(
-                paymentId, securityUtils.getCurrentUserId()));
+    @Operation(summary = "Confirm payment transaction")
+    public ResponseEntity<PaymentDto> confirmPayment(@PathVariable Long paymentId,
+                                                      @RequestBody PaymentConfirmRequest request) {
+        PaymentDto payment = paymentService.confirmPayment(paymentId, request);
+        return ResponseEntity.ok(payment);
     }
 
-    // ========== READ ==========
+    @PostMapping("/{paymentId}/cod/collect")
+    @PreAuthorize("hasAnyRole('DELIVERY_AGENT', 'ADMIN')")
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Confirm Cash On Delivery collection upon shipment delivery (DELIVERY_AGENT / ADMIN)")
+    public ResponseEntity<PaymentDto> collectCodPayment(@PathVariable Long paymentId,
+                                                         @Valid @RequestBody CodCollectRequest request) {
+        PaymentDto payment = paymentService.collectCodPayment(paymentId, request);
+        return ResponseEntity.ok(payment);
+    }
 
     @GetMapping("/{paymentId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN', 'MERCHANT')")
-    @Operation(summary = "Get payment by ID")
-    public ResponseEntity<PaymentResponse> getPayment(@PathVariable Long paymentId) {
-        return ResponseEntity.ok(paymentService.getPayment(
-                paymentId,
-                securityUtils.getCurrentUserId(),
-                securityUtils.getCurrentRole()));
+    @Operation(summary = "Get payment details by payment ID")
+    public ResponseEntity<PaymentDto> getPaymentById(@PathVariable Long paymentId) {
+        PaymentDto payment = paymentService.getPaymentById(paymentId);
+        return ResponseEntity.ok(payment);
     }
 
     @GetMapping("/order/{orderId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN', 'MERCHANT')")
-    @Operation(summary = "Get payment by order ID")
-    public ResponseEntity<PaymentResponse> getPaymentByOrder(@PathVariable Long orderId) {
-        return ResponseEntity.ok(paymentService.getPaymentByOrder(
-                orderId,
-                securityUtils.getCurrentUserId(),
-                securityUtils.getCurrentRole()));
+    @Operation(summary = "Get payment details by order ID")
+    public ResponseEntity<PaymentDto> getPaymentByOrderId(@PathVariable Long orderId) {
+        PaymentDto payment = paymentService.getPaymentByOrderId(orderId);
+        return ResponseEntity.ok(payment);
     }
 
     @GetMapping("/my-payments")
     @PreAuthorize("hasRole('CUSTOMER')")
-    @Operation(summary = "Get paginated list of the authenticated customer's payments")
-    public ResponseEntity<Page<PaymentResponse>> getMyPayments(
-            @RequestParam(required = false) PaymentStatus status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        return ResponseEntity.ok(paymentService.getMyPayments(
-                securityUtils.getCurrentUserId(), status, pageable));
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Get current customer's payment history")
+    public ResponseEntity<Page<PaymentDto>> getMyPayments(@PageableDefault(size = 20) Pageable pageable) {
+        Long customerId = SecurityUtils.getCurrentUserId();
+        Page<PaymentDto> payments = paymentService.getMyPayments(customerId, pageable);
+        return ResponseEntity.ok(payments);
     }
-
-    // ========== CANCEL ==========
 
     @PostMapping("/{paymentId}/cancel")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
     @Operation(summary = "Cancel a pending payment")
-    public ResponseEntity<PaymentResponse> cancelPayment(@PathVariable Long paymentId) {
-        return ResponseEntity.ok(paymentService.cancelPayment(
-                paymentId,
-                securityUtils.getCurrentUserId(),
-                securityUtils.getCurrentRole()));
+    public ResponseEntity<PaymentDto> cancelPayment(@PathVariable Long paymentId) {
+        PaymentDto payment = paymentService.cancelPayment(paymentId);
+        return ResponseEntity.ok(payment);
     }
 
-    // ========== REFUND ==========
-
     @PostMapping("/{paymentId}/refund")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    @Operation(summary = "Refund a successful payment (partial or full)")
-    public ResponseEntity<RefundResponse> refundPayment(
-            @PathVariable Long paymentId,
-            @Valid @RequestBody RefundPaymentRequest request) {
-        return ResponseEntity.ok(paymentService.refundPayment(
-                paymentId,
-                request,
-                securityUtils.getCurrentUserId(),
-                securityUtils.getCurrentRole()));
+    @Operation(summary = "Refund a successful payment (Admin-to-Customer atomic wallet transfer / Saga Compensation)")
+    public ResponseEntity<RefundDto> refundPayment(@PathVariable Long paymentId,
+                                                   @Valid @RequestBody RefundRequest request) {
+        RefundDto refund = paymentService.refundPayment(paymentId, request);
+        return ResponseEntity.ok(refund);
     }
 }
