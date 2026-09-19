@@ -1,19 +1,18 @@
 package com.eshoppingzone.inventory.controller;
 
-import com.eshoppingzone.inventory.dto.InventoryResponse;
-import com.eshoppingzone.inventory.dto.StockReservationRequest;
-import com.eshoppingzone.inventory.dto.StockUpdateRequest;
-import com.eshoppingzone.inventory.entity.Inventory;
+import com.eshoppingzone.inventory.dto.*;
 import com.eshoppingzone.inventory.service.InventoryService;
-
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/inventory")
+@RequestMapping("/api/v1/inventory")
+@Tag(name = "Inventory & Stock", description = "Endpoints for checking product stock, reservations, release, and confirmations")
 public class InventoryController {
 
     private final InventoryService inventoryService;
@@ -22,92 +21,40 @@ public class InventoryController {
         this.inventoryService = inventoryService;
     }
 
-    @PostMapping
-    public ResponseEntity<InventoryResponse> createInventory(
-            @RequestBody Inventory inventory) {
-
-        Inventory saved = inventoryService.createInventory(inventory);
-
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(toResponse(saved));
-    }
-
     @GetMapping("/{productId}")
-    public ResponseEntity<InventoryResponse> getInventory(
-            @PathVariable Long productId) {
-
-        return ResponseEntity.ok(
-                inventoryService.getInventoryByProductId(productId)
-        );
+    @Operation(summary = "Get current stock availability for a product (Public)")
+    public ResponseEntity<InventoryDto> getInventory(@PathVariable Long productId) {
+        InventoryDto dto = inventoryService.getInventory(productId);
+        return ResponseEntity.ok(dto);
     }
 
     @PostMapping("/reserve")
-    public ResponseEntity<InventoryResponse> reserveStock(
-            @Valid @RequestBody StockReservationRequest request) {
-
-        return ResponseEntity.ok(
-                toResponse(
-                        inventoryService.reserveStock(
-                                request.getOrderId(),
-                                request.getProductId(),
-                                request.getQuantity()
-                        )
-                )
-        );
+    @Operation(summary = "Atomically reserve stock for an order (Internal / Saga Step)")
+    public ResponseEntity<StockReservationResponse> reserveStock(@Valid @RequestBody StockReservationRequest request) {
+        StockReservationResponse response = inventoryService.reserveStock(request);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/release")
-    public ResponseEntity<?> releaseStock(
-            @Valid @RequestBody StockUpdateRequest request) {
-
-        return ResponseEntity.ok(
-                inventoryService.releaseStock(
-                        request.getOrderId(),
-                        request.getProductId(),
-                        request.getQuantity()
-                )
-        );
+    @Operation(summary = "Release reserved stock for a cancelled/failed order (Internal / Saga Compensation)")
+    public ResponseEntity<Void> releaseStock(@Valid @RequestBody StockReleaseRequest request) {
+        inventoryService.releaseStock(request);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/confirm")
-    public ResponseEntity<?> confirmStock(
-            @Valid @RequestBody StockUpdateRequest request) {
-
-        return ResponseEntity.ok(
-                inventoryService.confirmStock(
-                        request.getOrderId(),
-                        request.getProductId(),
-                        request.getQuantity()
-                )
-        );
+    @Operation(summary = "Confirm reserved stock as sold upon successful payment (Internal / Saga Step)")
+    public ResponseEntity<Void> confirmStock(@Valid @RequestBody StockConfirmRequest request) {
+        inventoryService.confirmStock(request);
+        return ResponseEntity.ok().build();
     }
 
-    @PostMapping("/add-stock")
-    public ResponseEntity<InventoryResponse> addStock(
-            @Valid @RequestBody StockUpdateRequest request) {
-
-        return ResponseEntity.ok(
-                toResponse(inventoryService.addStock(
-                        request.getProductId(),
-                        request.getQuantity()
-                ))
-        );
-    }
-
-    private InventoryResponse toResponse(Inventory inventory) {
-
-        InventoryResponse response = new InventoryResponse();
-
-        response.setId(inventory.getId());
-        response.setProductId(inventory.getProductId());
-        response.setAvailableQuantity(inventory.getAvailableQuantity());
-        response.setReservedQuantity(inventory.getReservedQuantity());
-        response.setSoldQuantity(inventory.getSoldQuantity());
-        response.setReorderLevel(inventory.getReorderLevel());
-        response.setCreatedAt(inventory.getCreatedAt());
-        response.setUpdatedAt(inventory.getUpdatedAt());
-
-        return response;
+    @PostMapping("/stock-update")
+    @PreAuthorize("hasAnyRole('MERCHANT', 'ADMIN')")
+    @SecurityRequirement(name = "BearerAuth")
+    @Operation(summary = "Initialize or update product stock quantity (MERCHANT / ADMIN)")
+    public ResponseEntity<InventoryDto> updateStock(@Valid @RequestBody StockUpdateRequest request) {
+        InventoryDto updated = inventoryService.updateStock(request);
+        return ResponseEntity.ok(updated);
     }
 }
